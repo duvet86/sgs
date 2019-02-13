@@ -3,6 +3,7 @@ import { Vector3 } from 'babylonjs';
 import { edgevmap, CHILD_MIN_OFFSETS, MATERIAL_SOLID, MATERIAL_AIR } from 'utils';
 import {sphereSDF} from "signedDistanceFunction";
 import OctreeDrawInfo from 'OctreeDrawInfo';
+import QefSolver from "QefSolver";
 
 enum OctreeNodeType {
   None,
@@ -90,7 +91,7 @@ private constructLeaf(leaf: OctreeNode): OctreeNode | undefined {
 	const MAX_CROSSINGS = 6;
 	let edgeCount = 0;
 	let averageNormal = new Vector3();
-	svd::QefSolver qef;
+	const qef: QefSolver = new QefSolver();
 
 	for (let i = 0; i < 12 && edgeCount < MAX_CROSSINGS; i++)
 	{
@@ -107,18 +108,20 @@ private constructLeaf(leaf: OctreeNode): OctreeNode | undefined {
 			continue;
 		}
 
-		const vec3 p1 = vec3(leaf->min + CHILD_MIN_OFFSETS[c1]);
-		const vec3 p2 = vec3(leaf->min + CHILD_MIN_OFFSETS[c2]);
-		const vec3 p = ApproximateZeroCrossingPosition(p1, p2);
-		const vec3 n = CalculateSurfaceNormal(p);
+		const p1: Vector3 = leaf.min.add(CHILD_MIN_OFFSETS[c1]);
+		const p2: Vector3 = leaf.min.add(CHILD_MIN_OFFSETS[c2]);
+
+		const p: Vector3 = this.approximateZeroCrossingPosition(p1, p2);
+		const n: Vector3 = this.calculateSurfaceNormal(p);
+
 		qef.add(p.x, p.y, p.z, n.x, n.y, n.z);
 
-		averageNormal += n;
+		averageNormal = averageNormal.add(n);
 
 		edgeCount++;
 	}
 
-	svd::Vec3 qefPosition;
+	const qefPosition: Vector3;
 	qef.solve(qefPosition, QEF_ERROR, QEF_SWEEPS, QEF_ERROR);
 
 	OctreeDrawInfo* drawInfo = new OctreeDrawInfo;
@@ -142,5 +145,44 @@ private constructLeaf(leaf: OctreeNode): OctreeNode | undefined {
 	leaf->drawInfo = drawInfo;
 
 	return leaf;
+}
+
+private approximateZeroCrossingPosition(p0: Vector3, p1: Vector3): Vector3
+{
+	const steps = 8;
+	const increment = 1.0 / steps;
+
+	// Approximate the zero crossing by finding the min value along the edge.
+	let minValue = 100000.0;
+	let t = 0.0;
+	let currentT = 0.0;
+
+	while (currentT <= 1.0)
+	{
+		// const vec3 p = p0 + ((p1 - p0) * currentT);
+		const p = p0.add((p1.subtract(p0)).multiplyByFloats(currentT, currentT, currentT));
+
+		const density = Math.sqrt(sphereSDF(p));
+		if (density < minValue)
+		{
+			minValue = density;
+			t = currentT;
+		}
+
+		currentT += increment;
+	}
+
+	return p0.add((p1.subtract(p0)).multiplyByFloats(t, t, t));
+}
+
+private calculateSurfaceNormal(p: Vector3): Vector3
+{
+	const H = 0.001;
+
+	const dx = sphereSDF(p.add(new Vector3(H, 0.0, 0.0))) - sphereSDF(p.subtract(new Vector3(H, 0.0, 0.0)));
+	const dy = sphereSDF(p.add(new Vector3(0.0, H, 0.0))) - sphereSDF(p.subtract(new Vector3(0.0, H, 0.0)));
+	const dz = sphereSDF(p.add(new Vector3(0.0, 0.0, H))) - sphereSDF(p.subtract(new Vector3(0.0, 0.0, H)));
+
+	return (new Vector3(dx, dy, dz)).normalize();
 }
 }
